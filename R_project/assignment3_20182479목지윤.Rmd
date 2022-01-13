@@ -1,0 +1,302 @@
+---
+title: "assignment3_20182479목지윤"
+output: html_document
+---
+
+```{r}
+#사용할 패키지
+library(psych)
+library(ggplot2)
+library(caret)
+library(gridExtra)
+library(leaps)
+library(glmnet)
+```
+
+## 1. Climate Change
+
+### 1번 문제
+
+
+```{r}
+# 데이터 불러오기
+cl<-read.csv('ClimateChange.csv')
+str(cl)
+```
+
+```{r}
+# Temp,CO2,CH4,N2O 상관관계 시각화
+pairs.panels(cl[c("Temp","CO2","CH4","N2O")])
+```
+
+#### 세계 평균 기온, 대기 중 이산화탄소(CO2) 농도, 대기 중 이산화질소 농도(N2O),대기 중 메탄 농도(CH4)는 모두 양의 상관관계를 가진다. 
+#### 세계평균기온이 상승함에 따라 CO2,N2O,CH4 농도 또한 증가함을 알 수 있다. 특히, CO2 농도와 N2O 농도는 더 큰 상관관계를 보이고 있다.
+
+
+```{r}
+# CFC.11,cfc.12 상관관계 시각화
+ggplot(cl,aes(x=CFC.11,y=CFC.12)) +
+      geom_point(color="cornflowerblue")
+```
+
+#### 대기 중 CFC-11 프레온 가스 농도와 CFC-12 프레온 가스 농도는 양의 상관관계에 있음을 알 수 있다. 
+
+```{r}
+# Temp,Aerosols 상관관계 시각화
+ggplot(cl,aes(x=Temp,y=Aerosols)) +
+      geom_point(color="cornflowerblue")
+```
+
+#### 세계평균기온이 상슴함에 따라 성층권 에어로졸 깊이는 줄어듦을 알 수 있다.
+
+```{r}
+# TSI,Aerosols 상관관계 시각화
+ggplot(cl,aes(x=Aerosols,y=TSI)) +
+      geom_point(color="cornflowerblue")
+```
+
+#### 성층권 에어로졸의 깊이가 줄어듦에 따라 대기 중 단위 면적당 태양에너지는 증가하는 추세임을 알 수 있다.
+
+```{r}
+# Temp,Aerosols,TSI,MEI 상관관계 시각화
+pairs.panels(cl[c("Temp","Aerosols","TSI","MEI")]) 
+```
+
+#### 세계평균기온과 에어로졸 깊이는 음의 상관관계를 가지며 TSI,MEI와는 약한 양의 상관관계를 가진다. 
+#### 또한, 에어로졸 깊이와 MEI는 양의 상관관계를 가짐을 알 수 있다. 
+
+### 2번 문제
+
+```{r}
+# train set, test set 분할
+cl_train<-subset(cl,Year<=2003)
+cl_test<-subset(cl,Year>2003)
+cl_train<-cl_train[,-1:-2]
+cl_test<-cl_test[,-1:-2]
+```
+
+```{r}
+# train set에 대하여 linear regression 수행
+model1<-lm(Temp~.,data=cl_train)
+summary(model1)
+```
+
+#### a) MEI, CFC.11, CFC.12, TSI, Aerosols 변수가 Temp에 큰 영향을 미친다.
+
+#### b) 음수 값을 가진다. N2O,CFC.11 feature들 간의 다중공선성, 즉 높은 선형관계가 존재하기 때문으로 추측된다.
+
+### 3번 문제
+
+```{r}
+# MEI,N2O,TSI,Aerosols feature만 사용하여 regression model 수행
+model2<-lm(Temp~MEI+N2O+TSI+Aerosols,data=cl_train)
+summary(model2)
+```
+
+```{r}
+# model1의 test set에 대한 RMSE값
+cl_test_pred1<-predict(model1,cl_test)
+RMSE(cl_test_pred1,cl_test$Temp)
+
+# model2의 test set에 대한 RMSE값
+cl_test_pred2<-predict(model2,cl_test)
+RMSE(cl_test_pred2,cl_test$Temp)
+
+```
+
+#### a) 2번 모델에서 N2O 변수의 coefficient는 음수였고 이 모델에서의 coefficient는 양수이다.
+
+#### b) 2번 모델의 R-squared 값은 0.7133, adjusted R-squared 값은 0.7037, RMSE는 0.0844이다. 
+#### 3번 모델의 R-squared 값은 0.6799, adjusted R-squared 값은 0.6747 RMSE는 0.085이다. 
+#### 3번 모델에서 2번 모델에 비해 R-squared값은 감소했지만 RMSE 값은 증가했다. 
+#### R-squared 값이 높다고 해서 예측성능이 높은 것을 의미하지는 않지만 RMSE값이 더 작은 2번 모델을 선택한다. 
+        
+### 4번 문제
+
+```{r}
+# forward selection
+# 10-fold CV 10회 적용
+train.control<-trainControl(method="repeatedcv",number=10,repeats=10)
+set.seed(123)
+fwd_model<-train(Temp~.,data=cl_train,method="leapForward",tuneGrid=data.frame(nvmax=1:8),trControl=train.control)
+fwd_model$results
+```
+
+```{r}
+# backward selection
+# 10-fold CV 10회 적용
+bwd_model<-train(Temp~.,data=cl_train,method="leapBackward",tuneGrid=data.frame(nvmax=1:8),trControl=train.control)
+bwd_model$results
+```
+
+```{r}
+# best feature수 찾기
+ggplot(fwd_model$results,aes(x=nvmax,y=RMSE)) + geom_point() + geom_line() + theme_bw()
+fwd_model$bestTune
+
+ggplot(bwd_model$results,aes(x=nvmax,y=RMSE)) + geom_point() + geom_line() + theme_bw()
+bwd_model$bestTune
+```    
+
+#### a) forward selection과 backward selection 모두 best feature수는 7이다.
+
+```{r}
+# best model
+reg_bwd_best<-regsubsets(Temp~.,data=cl_train,nvmax=8,method="backward")
+coef_bwd_best<-coef(reg_bwd_best,5)
+coef_bwd_best
+```
+
+#### b) backward selection 모델에서 7개의 feature가 추가된 모델의 RMSE값이 가장 작지만 
+#### 5개의 feature를 추가했을 때에도 비슷한 RMSE값이 나오기 때문에 위와 같은 모델을 결정하였다.
+
+### 5번 문제 
+
+```{r}
+# 모든 feature들 간의 interaction effect, 제곱항들을 추가한 모델
+# forward selection
+fwd_model2<-train(Temp~.+(.)^2+I(CO2^2)+I(CFC.11^2)+I(CFC.12^2),data=cl_train,method="leapForward",tuneGrid=data.frame(nvmax=1:39),trControl=train.control)
+fwd_model2$results
+```
+
+```{r}
+# backward selection
+bwd_model2<-train(Temp~.+(.)^2+I(CO2^2)+I(CFC.11^2)+I(CFC.12^2),data=cl_train,method="leapBackward",tuneGrid=data.frame(nvmax=1:39),trControl=train.control)
+bwd_model2$results
+```
+
+```{r}
+# best feature수 찾기
+ggplot(fwd_model2$results,aes(x=nvmax,y=RMSE)) + geom_point() + geom_line() + theme_bw()
+fwd_model2$bestTune
+
+ggplot(bwd_model2$results,aes(x=nvmax,y=RMSE)) + geom_point() + geom_line() + theme_bw()
+bwd_model2$bestTune
+```
+
+#### a) forward selection 에서의 best feature수는 13 이며, backward selection 에서의 best feature수는 20이다.
+
+```{r}
+# best model(forward selection, nvmax=13)
+reg_fwd_best2<-regsubsets(Temp~.+.:.+I(CO2^2)+I(CFC.11^2)+I(CFC.12^2),data=cl_train,nvmax=39,method="forward")
+coef_fwd_best2<-coef(reg_fwd_best2,13)
+coef_fwd_best2
+```
+
+#### b) backward selection에서 best feature수는 20이었지만 Model interpretability를 고려하여 
+#### RMSE값이 비슷한 13이 적절한 feature의 수라고 판단하였다. 
+#### 그러나 forward selection에서 feature수가 13일때 RMSE 값은 0.08573304 로  
+#### backward selection의 경우인 0.08606149 보다 작기 때문에 위와 같은 모델을 결정하였다.
+
+### 6번 문제
+
+```{r}
+# 2번 모델 prediction accuracy
+test_model1<-predict(model1,newdata=cl_test)
+RMSE(test_model1,cl_test$Temp)
+```
+
+```{r}
+# 3번 모델 prediction accuracy
+test_model2<-predict(model2,newdata=cl_test)
+RMSE(test_model2,cl_test$Temp)
+```
+
+
+```{r}
+# 4번 모델 prediction accuracy
+test.mat<-model.matrix(Temp~.,data=cl_test)
+test_pred3<-test.mat[,names(coef_bwd_best)] %*% coef_bwd_best
+RMSE(test_pred3,cl_test$Temp)
+```
+
+```{r}
+# 5번 모델 prediction accuracy
+test.mat2<-model.matrix(Temp~.+(.)^2+I(CO2^2)+I(CFC.11^2)+I(CFC.12^2),data=cl_test)
+test_pred4<-test.mat2[,names(coef_fwd_best2)] %*% coef_fwd_best2
+RMSE(test_pred4,cl_test$Temp)
+```
+
+#### interaction effect와 제곱항을 모두 넣은 5번 모델의 RMSE값이 오히려 가장 크게 나왔다. 
+#### 그 이유로 overfitting을 예상해 볼 수 있다. 모형이 복잡하여 training data에 과적합되어 오히려 test set에서는 정확도가 떨어지는 것이다.  
+
+
+
+## 2.Regression on Simulated Data
+
+```{r}
+# vector X,E,Y 생성
+set.seed(123)
+X<-rnorm(200,mean=0,sd=1)
+set.seed(124)
+E<-rnorm(200,mean=0,sd=4)
+Y<-1+2*X-3*X^2+4*X^3+E
+```
+
+### 1번 문제
+
+```{r}
+# 각 feautre들과 target 변수 간 시각화
+df<-data.frame(X,X^2,X^3,X^4,X^5,X^6,X^7,X^8,X^9,X^10,Y)
+a<-ggplot(data=df,mappping=aes(x=X,y=Y)) + geom_line(aes(x=X,y=Y),color="cornflowerblue")
+b<-ggplot(data=df,mappping=aes(x=X.2,y=Y)) + geom_line(aes(x=X.2,y=Y),color="cornflowerblue")
+c<-ggplot(data=df,mappping=aes(x=X.3,y=Y)) + geom_line(aes(x=X.3,y=Y),color="cornflowerblue")
+d<-ggplot(data=df,mappping=aes(x=X.4,y=Y)) + geom_line(aes(x=X.4,y=Y),color="cornflowerblue")
+e<-ggplot(data=df,mappping=aes(x=X.5,y=Y)) + geom_line(aes(x=X.5,y=Y),color="cornflowerblue")
+f<-ggplot(data=df,mappping=aes(x=X.6,y=Y)) + geom_line(aes(x=X.6,y=Y),color="cornflowerblue")
+g<-ggplot(data=df,mappping=aes(x=X.7,y=Y)) + geom_line(aes(x=X.7,y=Y),color="cornflowerblue")
+h<-ggplot(data=df,mappping=aes(x=X.8,y=Y)) + geom_line(aes(x=X.8,y=Y),color="cornflowerblue")
+i<-ggplot(data=df,mappping=aes(x=X.9,y=Y)) + geom_line(aes(x=X.9,y=Y),color="cornflowerblue")
+j<-ggplot(data=df,mappping=aes(x=X.10,y=Y)) + geom_line(aes(x=X.10,y=Y),color="cornflowerblue")
+
+grid.arrange(a,b,c,d,e,f,g,h,i,j,ncol=2,nrow=5)
+```
+
+### 2번 문제
+
+```{r}
+# 모든 feature들을 넣은 linear regression
+model_2.1<-lm(Y~.,data=df)
+summary(model_2.1)
+```
+
+#### X^3 변수가 P-value=0.0502 로 통계적으로 유의하다. 
+#### 실제 βj 값과 regression coefficient값이 모두 다르며 부호만 같다.
+
+### 3번 문제
+
+```{r}
+# X,X.2,X.3 변수만 적용한 linear regression
+model_2.2<-lm(Y~X+X.2+X.3,data=df)
+summary(model_2.2)
+```
+
+#### 모든 변수들이 통계적으로 유의하다. 
+#### β0 = 0.9843, β1 = 2.6704, β2 = -3.1382, β3 = 3.7791 로 실제 값 1,2,-3,4 와 가까운 값이 나왔다.
+
+### 4번 문제
+
+```{r}
+# feature matrix와 target vector 나누기
+x<-model.matrix(Y~.,df)[,-11]
+y<-df$Y
+
+# cross validation을 적용한 lasso regression 수행
+set.seed(123)
+cv_lasso<-cv.glmnet(x=x,y=y,alpha=1,nfolds=10)
+# lasso 시각화
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit,xvar="lambda",label=TRUE)
+```
+
+```{r}
+# 최적의 모델
+lasso.coef <- predict(cv_lasso,type="coefficients",s=cv_lasso$lambda.min)
+lasso.coef
+```
+
+#### β0 = 0.8899, β1 = 2.1854, β2 = -3.0168, β3 = 4.0727 로 3번의 모델보다 실제 값 1,2,-3,4 와 가까운 값이 나왔다.
+
+
+#### lasso regression은 유의미하지 않은 변수들에 대하여 coefficient값을 0으로 추정해 변수 선택효과를 가져온다. 
+#### 따라서 적은 수의 feature를 포함하게 되어 모델의 해석이 비교적 쉽다.

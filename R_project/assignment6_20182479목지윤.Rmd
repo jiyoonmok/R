@@ -1,0 +1,277 @@
+---
+title: "assignment6"
+author: "Ji yoon Mok"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: 
+    highlight: pygments
+  pdf_document: default
+---
+
+<br/>
+
+## **Sentiment Analysis on Twitter Dataset**
+
+<br/>
+
+“Tweets.csv” 파일은 트위터에서 미국의 6개 항공사(American, Delta, SouthWest, United, US Airways, Virgin America)를 언급하는 tweet 14,640개에 대한 정보를 수집한 데이터셋으로, 본 과제에서는 다음 두 변수를 활용한다. 
+
+* __airline_sentiment__: “positive”, “negative”, “neutral”
+* __text__: tweet 텍스트
+
+변수 airline_sentiment는 각 tweet 텍스트가 항공사에 대한 긍정적인 내용인지, 부정적인 내용인지, 중립적인 내용인지에 따라 positive, negative, neutral로 분류한 결과를 나타낸다. 본 과제에서는 tweet 텍스트로부터 positive/negative/neutral 여부를 판별하기 위한 모델을 만들어본다. 
+
+<br/>
+
+```{r warning = FALSE,message=FALSE}
+# 라이브러리 추가
+library(ggplot2)
+library(wordcloud)
+library(slam)
+library(tm)
+library(SnowballC)
+library(caret)
+library(nnet)
+library(randomForest)
+library(class)
+library(e1071)
+```
+
+<br/>
+
+>1. 모델을 수립하기 전에 데이터의 특성을 분석한다. 시각화 도구를 적절히 활용하자
+
+```{r}
+# 데이터 불러오기
+tweets <- read.csv("Tweets_win.csv",stringsAsFactors = FALSE)
+# target 변수는 factor로 변환
+tweets$airline_sentiment <- factor(tweets$airline_sentiment)
+# 데이터 구조 확인
+str(tweets)
+```
+```{r}
+# 항공사 분포 
+ggplot(tweets, aes(x=airline)) + geom_bar(stat="count")
+```
+
+* *United 항공사의 수가 가장 많았고 Virgin America 항공사의 수가 가장 적었다.*
+
+```{r}
+# 항공사 별 target 분포
+ggplot(tweets, aes(x=airline, fill=airline_sentiment)) + geom_bar(position="stack")
+```
+
+* *American, United, US Airways 3개의 항공사에 대한 부정적인 메시지가 많았다.*
+
+```{r}
+# target 변수 분포 시각화
+barplot(sort(table(tweets$airline_sentiment),decreasing=TRUE))
+```
+
+* *negative > neutal > positive 순으로 target 변수가 분포되어있다. *
+
+```{r,warning=FALSE}
+# 각 target 변수 메세지에 빈번하게 나오는 단어 시각화
+# target변수 메시지 분리 
+negative <- subset(tweets, airline_sentiment=="negative")
+neutral <- subset(tweets, airline_sentiment=="neutral")
+positive <- subset(tweets, airline_sentiment=="positive")
+
+# wordcloud 생성
+wordcloud(negative$text, max.words=50, colors=brewer.pal(8,"Dark2"),random.order=FALSE)
+wordcloud(neutral$text, max.words=50, colors=brewer.pal(8,"Dark2"),random.order=FALSE)
+wordcloud(positive$text, max.words=50, colors=brewer.pal(8,"Dark2"),random.order=FALSE)
+```
+
+* *negative 메시지의 경우 united, flight, usairways 등의 단어가 많이 포함되어있으며 neutral 메시지는 united, jetblue, southwestair 등의 단어가 많이 포함되었다. positive 메시지는 jetblue, thanks, united 등의 단어가 빈번하게 나왔다.*
+
+<br/>
+
+>2. 텍스트 데이터에 bag-of-words 기법을 적용하기 위해 적절한 preprocessing을 수행하고, 그 결과를 분석해보자.
+
+
+```{r}
+# 사용할 변수 추출
+twt <- tweets[,c(2,11)]
+# 추출한 데이터 구조 확인
+str(twt)
+```
+
+```{r}
+# corpus 생성
+twt_corpus <- VCorpus(VectorSource(twt$text))
+twt_corpus
+
+# 33번째 메시지를 확인
+inspect(twt_corpus[[33]])
+twt_corpus[[33]]$content
+
+```
+```{r}
+# Preprocessing the Texts
+
+# 대소문자 통합
+twt_corpus_clean <- tm_map(twt_corpus, content_transformer(tolower))
+twt_corpus_clean[[33]]$content
+
+# 숫자 제거
+twt_corpus_clean <- tm_map(twt_corpus_clean, removeNumbers)
+twt_corpus_clean[[33]]$content
+
+# stopwords 제거
+twt_corpus_clean <- tm_map(twt_corpus_clean,removeWords, stopwords())
+twt_corpus_clean[[33]]$content
+
+# wordcloud를 통해 확인한 빈번하게 나오는 단어들 중 target변수와 상관없는 단어를 제거한다.
+# flight, united, jetblue, southwestair,usairways,americanair
+twt_corpus_clean <- tm_map(twt_corpus_clean,removeWords, c("flight","united","jetblue","southwestair","usairways","americanair"))
+twt_corpus_clean[[33]]$content
+
+# 문장부호 제거 
+twt_corpus_clean <- tm_map(twt_corpus_clean, removePunctuation)
+twt_corpus_clean[[33]]$content
+
+# stemming
+twt_corpus_clean <- tm_map(twt_corpus_clean, stemDocument)
+twt_corpus_clean[[33]]$content
+
+# 공백 제거
+twt_corpus_clean <- tm_map(twt_corpus_clean, stripWhitespace)
+twt_corpus_clean[[33]]$content
+```
+
+* *stemming을 통해 expensive->expens, headphones->headphon 등 의미가 없는 단어들이 된 경우도 있지만, 전체적으로 preprocessing이 잘 이루어졌다. *
+
+<br/>
+
+>3. 계산시간을 줄이기 위해서 첫 5,000개의 데이터만 training set으로 사용하고, 나머지 모든 데이터를 test set으로 사용한다. Training set을 사용하여 predictive model을 만들어보자. 
+
+#### A. 지금까지 학습한 모델을 최대한 활용해보고, 분석 과정과 결과를 report하자. 
+
+```{r}
+# document-term matrix 생성
+twt_dtm <- DocumentTermMatrix(twt_corpus_clean)
+twt_dtm
+inspect(twt_dtm[1:5, 1:10])
+
+# tf-idf 계산
+twt_tfidf <- weightTfIdf(twt_dtm)
+inspect(twt_tfidf[1:5,])
+
+# feature reduction
+# 빈도수가 500번 이상인 단어 
+findFreqTerms(twt_dtm, lowfreq=500)
+# 전체 document 중에 0.5% 미만의 document에서 발생하는 단어는 제외 
+twt_dtm2 <- removeSparseTerms(twt_dtm, 0.995)
+twt_dtm2
+```
+
+__predictive model__
+
+```{r}
+# dtm을 데이터프레임으로 변환
+twts <- data.frame(as.matrix(twt_dtm2))
+
+# feature 이름 변환
+colnames(twts) <- make.names(colnames(twts))
+
+# target변수 추가
+twts$type <- twt$airline_sentiment
+
+# 데이터셋 분할
+train <- twts[1:5000,]
+test <- twts[5001:14640,]
+
+# train 구조 확인
+str(train)
+```
+
+<br/>
+
+* __Multinomial Logistic Regression__
+
+```{r}
+# multinomial logistic regression 수행
+mlr <- multinom(type~., data=train)
+
+# test set에 대한 예측
+mlr_pred <- predict(mlr, newdata=test, type="class")
+
+# 성능평가
+confusionMatrix(factor(mlr_pred), test$type)
+```
+* *정확도는 0.7299이다. 또한, sensitivity 값을 통해서 negative인 메시지를 가장 잘 구별하는 것과, neutral인 메시지는 비교적 잘 구별하지 못하는 것을 알 수 있었다. 부정적인 의견을 구별해내는 것이 중요하다고 생각하기 때문에 나쁘지 않은 결과라고 생각하였다. *
+
+<br/>
+
+* __Random Forest__
+
+```{r}
+# tree 수가 50개, feture 수 20인 random forest 생성
+set.seed(123)
+rf <- randomForest(type~., data=train, ntree=50,mtry=20)
+
+# test set에 대한 예측
+rf_pred <- predict(rf, newdata=test, type="class")
+
+# 성능 평가
+confusionMatrix(rf_pred, test$type)
+```
+* *정확도는 0.7394이다. logistic regression의 정확도보다 0.01 향샹되었다.  *
+
+
+<br/>
+
+* __SVM__
+
+```{r}
+# svm모델 생성
+# tuning시간이 오래걸려, parameter값을 직접 조정하며 정확도를 관찰해 결정하였다.
+svm <- svm(type~., data=train, kernel="radial", gamma=0.1, cost=1000)
+
+# test set에 대한 예측
+svm_pred <- predict(svm, newdata=test)
+
+# 성능 평가
+confusionMatrix(svm_pred,test$type)  
+```
+* *정확도는 0.6954이다. 위의 모델들에 비해 성능이 다소 떨어진다.  *
+
+<br/>
+
+* __Knn__
+
+```{r}
+# train set, test set의 target변수 
+train_type <- train[,"type"]
+test_type <- test[,"type"]
+
+train_x <- train[1:324]
+test_x <- test[1:324]
+
+# knn 알고리즘을 이용한 예측 (k값은 5000의 루트 값과 가까운 홀수값=71)
+knn_pred <- knn(train=train_x, test=test_x, cl=train_type, k=71)
+                                                                    
+# 성능 평가
+confusionMatrix(knn_pred, test_type)
+```
+* *정확도는 0.5157로 위 모델들에 비해 현저히 낮다. 또한, 다른 모델들과 다르게 negative class의 sensitivity값이 낮고 오히려 neutral class의 sensitivity값이 높았다. negative class를 잘 분류하는 것이 중요한 관건이라고 생각하기 때문에  이 모델은 성능이 좋지 않다고 판단된다. *
+
+<br/>
+
+#### B. 최종적으로 선택한 모델은 무엇이며 test set에 대한 accuracy는 얼마인가?
+
+model   |accuracy |negative:sensitivity 
+----|---------|------------ 
+logistic regression |0.7299   |0.8548
+random forest |0.7394   |0.8907
+svm |0.6954      |0.8034
+knn |0.5157     |0.4145  
+
+* *random forest 모델을 선택했다. accuracy는 0.7394로 가장 높았고 negative class의 경우 거의 90% 가까이 분류해냈기 때문이다. *
+
+<br/>
+
+#### C. 세 class (positive, negative, neutral) 중에서 어떤 class를 분류하기 어려운가?
+
+* *knn 모델을 제외한 모든 모델에서 negative class에 비해 positive, neutral class를 분류하기 어려웠다. 특히, neutral class의 경우 sensitivity값이 0.5를 넘지 못했다.*

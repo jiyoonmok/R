@@ -1,0 +1,178 @@
+---
+title: "Assignment1"
+output: 
+  html_document :
+    self_contained: FALSE
+    keep_md: FALSE
+    theme: null
+    highlight: null
+---
+
+
+```{r, message=FALSE}
+# 사용할 패키지 추가
+library(ggplot2)
+library(ggmap)
+library(dplyr)
+library(reshape2)
+```
+
+<br/>
+
+> 1. 숭실대입구(살피재) 역의 11월 1일의 시간대별 승차 및 하차 인원 수를 하나의 그래프로 시각화해보자.
+
+```{r}
+# 데이터파일 읽기
+metro<-read.csv('metro.csv')
+str(metro)
+```
+
+```{r}
+# 숭실대입구(살피재)역, 2019-11-01 데이터만 추출
+ssudata<-subset(metro, 역명 == "숭실대입구(살피재)" & 날짜=="2019-11-01")
+str(ssudata)
+```
+
+```{r}
+# 시간 데이터 추출
+time<-colnames(ssudata[7:30])
+time<-data.frame(time)
+
+# 승차 데이터 추출
+on<-data.frame(ssudata[1,7:30])
+colnames(on)<-NULL
+
+# 하차 데이터 추출
+off<-data.frame(ssudata[2,7:30])
+colnames(off)<-NULL
+
+# 데이터프레임 결합
+on<-t(data.frame(on))
+off<-t(data.frame(off))
+df<-cbind(time,on,off)
+names(df)[2]<-"on"
+names(df)[3]<-"off"
+df
+```
+
+```{r}
+# 그래프로 시각화하기
+ggplot(df,aes(x=time)) +
+    geom_point(aes(y=on,color="on")) +
+    geom_point(aes(y=off,color="off"))+
+    scale_color_manual(breaks=c("on","off"),labels=c("승차","하차"),values=c("red","blue"))+
+    labs(title="2019-11-01 숭실대입구역(살피재) 승하차 인원수",y="passengers",color="승하차") +
+    coord_flip()
+```
+
+<br/>
+
+> 2. 숭실대입구(살피재) 역의 11월 4일(월)부터 11월10일(일)까지 일주일간 각 요일별 시간대별 승차인원과 하차인원의 분포를 각각 heat map으로 시각화해보자.
+
+```{r}
+#숭실대입구역, 11월4일~11월10일 승차,하차 데이터 추출
+on_data<-subset(metro,역명=="숭실대입구(살피재)" & 날짜>="2019-11-04" & 날짜<="2019-11-10" & 구분=="승차")
+off_data<-subset(metro,역명=="숭실대입구(살피재)" & 날짜>="2019-11-04" & 날짜<="2019-11-10" & 구분=="하차")
+
+#요일 변수 추가
+on_data$요일<-c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
+off_data$요일<-c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
+```
+
+```{r}
+# 승차 데이터 전처리
+on_data<-on_data[,-1:-6]
+on_data_melt<-melt(on_data,id=c("요일"))
+on_data_melt$요일<-factor(on_data_melt$요일)
+on_data_melt$요일<-factor(on_data_melt$요일,levels=levels(on_data_melt$요일)[c(2,6,7,5,1,3,4)])
+
+# 승차 데이터 heatmap
+ggplot(on_data_melt,aes(x=variable,y=요일,fill=value)) +
+     geom_tile() +
+     theme_minimal() +
+     labs(title="요일별 시간대별 숭실대입구역 승차인원",x="시간")+
+     scale_fill_continuous(name="승차인원")
+
+```
+
+```{r}
+# 하차 데이터 전처리
+off_data<-off_data[,-1:-6]
+off_data_melt<-melt(off_data,id=c("요일"))
+off_data_melt$요일<-factor(off_data_melt$요일)
+off_data_melt$요일<-factor(off_data_melt$요일,levels=levels(off_data_melt$요일)[c(2,6,7,5,1,3,4)])
+
+# 하차 데이터 heatmap
+ggplot(off_data_melt,aes(x=variable,y=요일,fill=value)) +
+     geom_tile() +
+     theme_minimal() +
+     labs(title="요일별 시간대별 숭실대입구역 하차인원",x="시간")+
+     scale_fill_continuous(name="하차인원")
+```
+
+<br/>
+
+> 3. 7호선의 모든 역 중에서 유동인구(월간 승하차 전체인원)가 가장 많은 20개 역에 대한 유동인구 수를 그래프로 시각화해보자. 
+
+```{r}
+# 7호선 데이터만 추출하기
+line7<-subset(metro,호선=="7호선")
+str(line7)
+```
+
+```{r}
+# 역 별 유동인구 수 구하기 (승하차 인원수 합계)
+station<-list(line7$역명)
+d<-aggregate(line7[,7:24],by=station,sum)
+합계<-rowSums(d[,-1])
+역명<-d[,-2:-19]
+total<-cbind(역명,합계)
+total<-data.frame(total)
+total$합계<-as.numeric(total$합계)
+str(total)
+```
+
+```{r}
+# 상위 20개 역 데이터 추출
+total<-total[order(-total$합계),]
+max20<-total[1:20,]
+max20
+```
+
+```{r}
+#histogram으로 시각화
+ggplot(max20,aes(x=역명,y=합계)) +
+      geom_bar(stat='identity',fill="cornflowerblue",color="white") +
+      labs(x="역명",y="유동인구수",title="7호선 유동인구수 상위 20개 역")+
+      coord_flip()
+```
+
+<br/>
+
+> 4. 7호선 지하철역 위치 정보를 활용하여 7호선의 모든 역에 대한 유동인구 분포를 지도 위에 시각화해보자. 
+
+```{r}
+# 데이터파일 읽기
+metro_c<-read.csv('C:/Users/목지윤/OneDrive - 숭실대학교 - Soongsil University/문서/metro_coord.csv')
+str(metro_c)
+```
+
+```{r}
+# 유동인구수 데이터와 위치 데이터프레임 병합
+df<-merge(metro_c,total,by="역명",all=TRUE)
+str(df)
+```
+
+```{r}
+# map 생성
+bbox<-c(left=min(metro_c$lon),bottom=min(metro_c$lat),right=max(metro_c$lon),top=max(metro_c$lat))
+seoul<-get_stamenmap(bbox,11,"terrain")
+map<-ggmap(seoul)
+
+# point , label 넣기, 범례 제목 변경
+ map + geom_point(df,mapping=aes(x=lon,y=lat,color=합계,size=합계/100000)) +
+     geom_text(df,mapping=aes(x=lon,y=lat+0.01,label=역명),size=3) +
+     scale_color_continuous(name="유동인구") +
+     scale_size_continuous(name="유동인구")
+
+```

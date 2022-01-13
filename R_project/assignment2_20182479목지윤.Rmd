@@ -1,0 +1,137 @@
+---
+title: "assignment2"
+output: html_document
+---
+## 20182479 목지윤
+
+### 1. 먼저 ID와 ZIP.code는 feature에서 제외한다. 그리고 z-score normalization을 활용하여 모든 feature들의 scale을 일치시킨다. 첫 4,000명의 데이터를 training set으로, 나머지 1,000명의 데이터를 test set으로 사용하고, training set과 test set에서의 target variable의 분포를 비교해 보자. 
+
+```{r}
+#사용할 패키지 설치
+library(caret)
+library(ggplot2)
+library(class)
+```
+
+```{r}
+#데이터 읽어오기
+cb<-read.csv('CommonBank.csv',stringsAsFactors=FALSE)
+
+#ID,ZIP.code는 feature에서 제외
+cb<-cb[c(-1,-5)]
+str(cb)
+```
+
+```{r}
+#target변수 PersonalLoan 자료형 factor로 바꾸기
+cb$PersonalLoan<-factor(cb$PersonalLoan,levels=c(1,0),labels=c("Accpet","Reject"))
+
+#z_score normalization
+cb[,-8]<-scale(cb[,-8])
+
+#training set과 test set 나누기
+cb_train<-cb[1:4000,]
+cb_test<-cb[4001:5000,]
+cb_train_label<-cb[1:4000,8]
+cb_test_label<-cb[4001:5000,8]
+```
+
+```{r}
+#target variable 분포 그래프
+ggplot(cb_train,mapping=aes(PersonalLoan)) + geom_bar() + geom_bar(cb_test,mapping=aes(PersonalLoan),fill="red")
+```
+
+#### test set(red), train set(black)의 target variable 분포가 1:9 정도로 비슷하다.
+
+
+### 2. 5-NN을 적용하고, 결과를 분석해보자.
+
+#### ● knn 모델 만들기
+
+```{r}
+# target variable을 제외한 train, test set
+cb_train_feature<-cb[1:4000,-8]
+cb_test_feature<-cb[4001:5000,-8]
+# 5-NN model
+set.seed(11)
+knn_model<-knn(train=cb_train_feature,test=cb_test_feature,cl=cb_train_label,k=5)
+```
+
+```{r}
+# test set의 target variable과 결과 비교
+table(cb_test_label,knn_model)
+```
+
+#### ● accuracy = (49+913)/1000 = 0.932
+#### ● precision = 49/ (49+54) = 0.476
+#### ● sensitivity = 49 / (49+34) = 0.59
+#### ● specificity = 913 / (49+913) = 0.996
+
+
+### 3. Training set 중에서 마지막 800명의 데이터를 validation set으로 사용하여, 다양한 k 값에 대해 k-NN을 적용해 보고 예측 성능을 비교해 보자. k가 어떤 값을 가질때 모델의 성능이 가장 우수한가?
+
+```{r}
+#validation set 
+cb_valid<-cb[3201:4000,]
+cb_valid_feature<-cb[3201:4000,-8]
+cb_valid_label<-cb[3201:4000,8]
+train<-cb[1:3200,]
+train_feature<-cb[1:3200,-8]
+train_label<-cb[1:3200,8]
+```
+
+```{r}
+#knn 학습하기 
+#target variable이 범주형이므로 k값은 홀수로 하는것이 적합하다
+accuracy<-NULL
+for (i in seq(1,30,2)) {
+  set.seed(11)
+  knn_fit<-knn(train=train_feature,test=cb_valid_feature,cl=train_label,k=i)
+  accuracy<- c(accuracy, sum(knn_fit == cb_valid_label) / length(cb_valid_label))
+}
+accuracy
+```
+
+#### k=1에서 정확도가 가장 높다. 하지만 k=1일 경우 과적합의 위험이 있으므로 두번째로 정확도가 높은 k=5이 적합하다.
+
+
+### 4. Training set에 대해 5-fold cross validation을 5회 반복하여 best k 값을 찾아보자. Best k 값으로 만들어지는 최종 model에 test set을 적용하여 model의 성능을 report하자. 
+
+```{r}
+set.seed(11)
+#5_fold cross validation 을 5회 반복
+cv<-trainControl(method="repeatedcv",number=5,repeats=5)
+
+#k=1..20 값에 대해서 parameter tuning
+tune_grid<-expand.grid(k=c(1:20))
+
+#모델을 학습하는 train() 함수 이용 
+model_fit<-train(data=cb_train,PersonalLoan~.,method="knn",trControl=cv,tuneGrid=tune_grid)
+model_fit
+```
+```{r}
+
+# k값에 따른 정확도 그래프
+ggplot(model_fit)
+
+```
+
+
+#### k=3일 때 accuracy가 0.9575로 가장 높기 때문에 Best k값은 3이다.
+
+
+
+#### ● 최종 model을 test set에 적용
+
+```{r}
+test_pred<-predict(model_fit,cb_test)
+confusionMatrix(test_pred,cb_test_label)
+```
+#### accuracy=0.967, sensitivity=0.6506, specificity=0.9956
+
+
+### 5. 3번과 4번에서 활용한 training 방식의 장단점을 비교해보자.
+
+
+#### 4번에서 사용한 k-fold cross validation은 모든 데이터셋을 훈련, 평가에 활용 할 수 있어 정확도를 향상 시키고 데이터 부족으로 인한 underfitting을 막을 수 있다. 또한, 평가에 사용되는 데이터 편중을 막을 수 있으며 좀 더 일반화된 모델을 만들 수 있다는 장점이 있지만 iteration 횟수가 많기 때문에 모델 훈련 및 평가 시간이 오래 걸린다.
+#### 그에 비해 3번에서 validation set을 사용하면 모델의 성능을 빠르게 평가 할 수 있다. 하지만 validation set을 하나만 정해서 한번 사용하므로 데이터의 양이 많지 않을 경우에는 신뢰하기 어렵고 변동이 커질수 있으며 모델의 성능이 validation set을 어떤것으로 정하느냐에따라 달라지게 된다.
